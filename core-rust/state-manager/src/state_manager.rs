@@ -599,6 +599,8 @@ where
 
         let mut parent_accumulator_hash = self.store.get_top_accumulator_hash();
 
+        debug_assert_eq!(parent_accumulator_hash, prepare_request.parent_accumulator);
+
         let already_prepared_payloads: Vec<_> = prepare_request
             .prepared_vertices
             .into_iter()
