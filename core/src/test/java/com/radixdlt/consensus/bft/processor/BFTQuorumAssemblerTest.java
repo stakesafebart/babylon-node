@@ -62,18 +62,68 @@
  * permissions under this License.
  */
 
-package com.radixdlt.consensus.bft;
+package com.radixdlt.consensus.bft.processor;
 
-import com.google.common.hash.HashCode;
-import com.radixdlt.crypto.HashUtils;
-import nl.jqno.equalsverifier.EqualsVerifier;
+import static com.radixdlt.utils.TypedMocks.rmock;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+import com.radixdlt.consensus.*;
+import com.radixdlt.consensus.bft.*;
+import com.radixdlt.consensus.liveness.Pacemaker;
+import com.radixdlt.consensus.vertexstore.VertexStoreAdapter;
+import com.radixdlt.environment.EventDispatcher;
+import com.radixdlt.monitoring.Metrics;
+import com.radixdlt.monitoring.MetricsInitializer;
+import org.junit.Before;
 import org.junit.Test;
 
-public class VertexChainTest {
+public final class BFTQuorumAssemblerTest {
+  private BFTValidatorId self = mock(BFTValidatorId.class);
+  private Metrics metrics = new MetricsInitializer().initialize();
+  private PendingVotes pendingVotes = mock(PendingVotes.class);
+  private VertexStoreAdapter vertexStore = mock(VertexStoreAdapter.class);
+  private Pacemaker pacemaker = mock(Pacemaker.class);
+  private EventDispatcher<RoundQuorumReached> roundQuorumReachedEventDispatcher =
+      rmock(EventDispatcher.class);
+
+  private BFTQuorumAssembler bftQuorumAssembler;
+
+  @Before
+  public void setUp() {
+    this.bftQuorumAssembler =
+        new BFTQuorumAssembler(
+            this.pacemaker,
+            this.self,
+            this.roundQuorumReachedEventDispatcher,
+            this.metrics,
+            this.pendingVotes,
+            mock(RoundUpdate.class));
+  }
+
   @Test
-  public void equalsContract() {
-    EqualsVerifier.forClass(VertexChain.class)
-        .withPrefabValues(HashCode.class, HashUtils.random256(), HashUtils.random256())
-        .verify();
+  public void when_process_vote_with_quorum__then_processed() {
+    BFTValidatorId author = mock(BFTValidatorId.class);
+    Vote vote = mock(Vote.class);
+    when(vote.getAuthor()).thenReturn(author);
+
+    QuorumCertificate qc = mock(QuorumCertificate.class);
+    HighQC highQc = mock(HighQC.class);
+    QuorumCertificate highestCommittedQc = mock(QuorumCertificate.class);
+    when(highQc.highestCommittedQC()).thenReturn(highestCommittedQc);
+    when(vote.getRound()).thenReturn(Round.of(1));
+
+    when(this.pendingVotes.insertVote(any())).thenReturn(VoteProcessingResult.qcQuorum(qc));
+    when(this.vertexStore.highQC()).thenReturn(highQc);
+
+    // Move to round 1
+    this.bftQuorumAssembler.processRoundUpdate(
+        RoundUpdate.create(Round.of(1), highQc, mock(BFTValidatorId.class), this.self));
+
+    this.bftQuorumAssembler.processVote(vote);
+
+    verify(this.roundQuorumReachedEventDispatcher, times(1)).dispatch(any());
+    verify(this.pendingVotes, times(1)).insertVote(eq(vote));
+    verifyNoMoreInteractions(this.pendingVotes);
   }
 }

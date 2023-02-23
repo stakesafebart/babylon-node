@@ -62,59 +62,74 @@
  * permissions under this License.
  */
 
-package com.radixdlt.consensus.bft;
+package com.radixdlt.consensus.vertexstore;
 
-import com.google.common.collect.ImmutableList;
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+
 import com.google.common.hash.HashCode;
-import com.radixdlt.consensus.VertexWithHash;
-import java.util.List;
-import java.util.Objects;
-import javax.annotation.concurrent.Immutable;
+import com.radixdlt.consensus.*;
+import com.radixdlt.consensus.bft.Round;
+import com.radixdlt.crypto.HashUtils;
+import com.radixdlt.crypto.Hasher;
+import com.radixdlt.ledger.AccumulatorState;
+import com.radixdlt.serialization.DefaultSerialization;
+import org.junit.Before;
+import org.junit.Test;
 
-/** A chain of vertices verified to have correct parent links. */
-@Immutable
-public final class VertexChain {
-  private final ImmutableList<VertexWithHash> vertices;
+public class VertexStoreStateCreationTest {
+  private VertexWithHash genesisVertex;
+  private HashCode genesisHash;
+  private Hasher hasher;
+  private static final LedgerHeader MOCKED_HEADER =
+      LedgerHeader.create(
+          0,
+          Round.genesis(),
+          new AccumulatorState(0, HashUtils.zero256()),
+          HashUtils.zero256(),
+          0,
+          0);
 
-  private VertexChain(ImmutableList<VertexWithHash> vertices) {
-    this.vertices = vertices;
+  @Before
+  public void setup() {
+    this.hasher = new Sha256Hasher(DefaultSerialization.getInstance());
+    this.genesisVertex = Vertex.createInitialEpochVertex(MOCKED_HEADER).withId(hasher);
+    this.genesisHash = genesisVertex.hash();
   }
 
-  public static VertexChain create(List<VertexWithHash> vertices) {
-    if (vertices.size() >= 2) {
-      for (int index = 1; index < vertices.size(); index++) {
-        HashCode parentId = vertices.get(index - 1).hash();
-        HashCode parentIdCheck = vertices.get(index).vertex().getParentVertexId();
-        if (!parentId.equals(parentIdCheck)) {
-          throw new IllegalArgumentException(String.format("Invalid chain: %s", vertices));
-        }
-      }
-    }
-
-    return new VertexChain(ImmutableList.copyOf(vertices));
+  @Test
+  public void creating_vertex_store_with_root_not_committed_should_fail() {
+    BFTHeader genesisHeader = new BFTHeader(Round.of(0), genesisHash, mock(LedgerHeader.class));
+    VoteData voteData = new VoteData(genesisHeader, genesisHeader, null);
+    QuorumCertificate badRootQC = new QuorumCertificate(voteData, new TimestampedECDSASignatures());
+    assertThatThrownBy(
+            () ->
+                VertexStoreState.create(HighQC.ofInitialEpochQc(badRootQC), genesisVertex, hasher))
+        .isInstanceOf(IllegalStateException.class);
   }
 
-  public ImmutableList<VertexWithHash> getVertices() {
-    return vertices;
+  @Test
+  public void creating_vertex_store_with_committed_qc_not_matching_vertex_should_fail() {
+    BFTHeader genesisHeader = new BFTHeader(Round.of(0), genesisHash, mock(LedgerHeader.class));
+    BFTHeader otherHeader =
+        new BFTHeader(Round.of(0), HashUtils.random256(), mock(LedgerHeader.class));
+    VoteData voteData = new VoteData(genesisHeader, genesisHeader, otherHeader);
+    QuorumCertificate badRootQC = new QuorumCertificate(voteData, new TimestampedECDSASignatures());
+    assertThatThrownBy(
+            () ->
+                VertexStoreState.create(HighQC.ofInitialEpochQc(badRootQC), genesisVertex, hasher))
+        .isInstanceOf(IllegalStateException.class);
   }
 
-  @Override
-  public String toString() {
-    return String.format("%s{vertices=%s}", this.getClass().getSimpleName(), this.vertices);
-  }
-
-  @Override
-  public int hashCode() {
-    return Objects.hashCode(vertices);
-  }
-
-  @Override
-  public boolean equals(Object o) {
-    if (!(o instanceof VertexChain)) {
-      return false;
-    }
-
-    VertexChain other = (VertexChain) o;
-    return Objects.equals(this.vertices, other.vertices);
+  @Test
+  public void creating_vertex_store_with_qc_not_matching_vertex_should_fail() {
+    BFTHeader genesisHeader =
+        new BFTHeader(Round.of(0), HashUtils.random256(), mock(LedgerHeader.class));
+    VoteData voteData = new VoteData(genesisHeader, genesisHeader, genesisHeader);
+    QuorumCertificate badRootQC = new QuorumCertificate(voteData, new TimestampedECDSASignatures());
+    assertThatThrownBy(
+            () ->
+                VertexStoreState.create(HighQC.ofInitialEpochQc(badRootQC), genesisVertex, hasher))
+        .isInstanceOf(IllegalStateException.class);
   }
 }
